@@ -56,6 +56,11 @@ COMMENT_PURPOSES = [
     "異常値を重視したコメント",
 ]
 
+COMMENT_TYPES = [
+    "定性的なコメント",
+    "定量的なコメント",
+]
+
 
 @dataclass
 class PeriodSetting:
@@ -203,6 +208,92 @@ def diff_message(current: Dict[str, float], previous: Optional[Dict[str, float]]
     return "前期間と比べて大きな変化は見られません。"
 
 
+
+def fmt_count(value: float) -> str:
+    """表示用に小数を避けて回数・件数を整える。"""
+    return str(int(round(value)))
+
+
+def fmt_minutes(value: float) -> str:
+    return f"{int(round(value))}分"
+
+
+def fmt_rate(value: float) -> str:
+    return f"{value * 100:.0f}%"
+
+
+def metric_display_name(metric: str) -> str:
+    names = {
+        "病気欠席数": "病気欠席",
+        "事故欠席数": "事故欠席",
+        "遅刻数": "遅刻",
+        "早退数": "早退",
+        "忌引等数": "忌引等",
+        "出席停止数": "出席停止",
+        "保健室利用数": "保健室利用",
+        "心の天気晴れ数": "晴れ",
+        "心の天気曇り数": "曇り",
+        "心の天気雨数": "雨",
+        "総学習時間": "学習時間",
+        "解答数": "解答数",
+        "正解率": "正解率",
+    }
+    return names.get(metric, metric)
+
+
+def metric_value_text(metric: str, value: float) -> str:
+    if metric == "総学習時間":
+        return fmt_minutes(value)
+    if metric == "正解率":
+        return fmt_rate(value)
+    if metric == "解答数":
+        return f"{fmt_count(value)}問"
+    return f"{fmt_count(value)}回"
+
+
+def summarize_selected_totals(values: Dict[str, float], metrics: List[str], max_items: int = 3) -> str:
+    """選択指標から、値が大きいものを数値付きで短く並べる。"""
+    non_zero = [(m, values.get(m, 0.0)) for m in metrics if values.get(m, 0.0) != 0]
+    if not non_zero:
+        non_zero = [(m, values.get(m, 0.0)) for m in metrics[:max_items]]
+    non_zero.sort(key=lambda x: abs(x[1]), reverse=True)
+    parts = [f"{metric_display_name(m)}{metric_value_text(m, v)}" for m, v in non_zero[:max_items]]
+    return "、".join(parts)
+
+
+def summarize_selected_changes(
+    current: Dict[str, float],
+    previous: Optional[Dict[str, float]],
+    metrics: List[str],
+    max_items: int = 2,
+) -> str:
+    """比較モード用に、変化が大きい指標を 旧→新 で短く表現する。"""
+    if not previous:
+        return summarize_selected_totals(current, metrics, max_items=max_items)
+
+    changes = []
+    for metric in metrics:
+        cur = current.get(metric, 0.0)
+        prev = previous.get(metric, 0.0)
+        diff = cur - prev
+        if metric == "正解率":
+            score = abs(diff) * 100
+        else:
+            score = abs(diff)
+        changes.append((score, metric, prev, cur, diff))
+
+    changes.sort(key=lambda x: x[0], reverse=True)
+    meaningful = [item for item in changes if item[0] > 0]
+    target = meaningful[:max_items] if meaningful else changes[:max_items]
+
+    parts = []
+    for _, metric, prev, cur, _ in target:
+        parts.append(
+            f"{metric_display_name(metric)}{metric_value_text(metric, prev)}→{metric_value_text(metric, cur)}"
+        )
+    return "、".join(parts)
+
+
 def fit_text(text: str, limit: int) -> str:
     """文字数上限にできるだけ収める。"""
     text = text.replace("\n", "").strip()
@@ -218,16 +309,33 @@ def fit_text(text: str, limit: int) -> str:
     return cut.rstrip("、。") + "。"
 
 
-def generate_life_comment(
+
+def qualitative_life_comment(
     current: Dict[str, float],
     previous: Optional[Dict[str, float]],
     analysis_mode: str,
     purpose: str,
     selected_life_columns: List[str],
-    limit: int = 50,
+    limit: int,
 ) -> str:
     if not selected_life_columns:
         return fit_text("生活面の指標が選択されていません。", limit)
+
+    key_life_metrics = [
+        m
+        for m in ["病気欠席数", "事故欠席数", "遅刻数", "早退数", "保健室利用数", "心の天気雨数", "心の天気曇り数"]
+        if m in selected_life_columns
+    ] or selected_life_columns
+
+    if "比較" in analysis_mode:
+        base = diff_message(current, previous, key_life_metrics)
+        if purpose == "異常値を重視したコメント":
+            text = f"{base}変化が目立つ項目を優先して確認します。"
+        elif purpose == "不登校を防ぐためのコメント":
+            text = f"{base}登校状況や生活リズムの変化を確認します。"
+        else:
+            text = f"{base}生活面の変化を継続して確認します。"
+        return fit_text(text, limit)
 
     absence = current.get("病気欠席数", 0) + current.get("事故欠席数", 0)
     late = current.get("遅刻数", 0)
@@ -235,49 +343,141 @@ def generate_life_comment(
     infirmary = current.get("保健室利用数", 0)
     cloudy = current.get("心の天気曇り数", 0)
     rainy = current.get("心の天気雨数", 0)
-
-    comparison_keys = [
-        col
-        for col in ["病気欠席数", "事故欠席数", "遅刻数", "早退数", "保健室利用数", "心の天気雨数"]
-        if col in selected_life_columns
-    ]
-    comparison = diff_message(current, previous, comparison_keys) if "比較" in analysis_mode else ""
+    total_signals = absence + late + leave_early + infirmary + cloudy + rainy
 
     if purpose == "異常値を重視したコメント":
-        alerts = []
-        if "遅刻数" in selected_life_columns and late >= 2:
-            alerts.append("遅刻")
-        if "保健室利用数" in selected_life_columns and infirmary >= 2:
-            alerts.append("保健室利用")
-        if "心の天気雨数" in selected_life_columns and rainy >= 2:
-            alerts.append("心の天気の雨")
-        if ({"病気欠席数", "事故欠席数"} & set(selected_life_columns)) and absence >= 2:
-            alerts.append("欠席")
-        if alerts:
-            text = "・".join(alerts[:2]) + "が目立ちます。生活リズムや体調面の変化に注意が必要です。"
+        if total_signals >= 4:
+            text = "対象期間では生活面に気になる変化があります。目立つ項目を優先して確認します。"
         else:
-            text = "選択した生活指標では、特に目立つ異常値は見られません。"
-        return fit_text(text, limit)
-
-    if purpose == "不登校を防ぐためのコメント":
-        if absence + late + leave_early + infirmary + rainy >= 4:
-            text = "生活面に複数の変化が見られます。無理のない声かけで様子を確認します。"
-        elif late + infirmary + rainy >= 2:
-            text = "遅刻や体調面の変化が見られます。日常の声かけを通じて見守ります。"
+            text = "対象期間では生活面の大きな変化は少ない状況です。"
+    elif purpose == "不登校を防ぐためのコメント":
+        if absence + late + infirmary + rainy >= 4:
+            text = "生活面に変化が見られます。登校状況や体調面を早めに確認します。"
         else:
-            text = "選択した生活指標では大きく乱れていません。普段の様子を見守ります。"
-        return fit_text(text, limit)
-
-    if comparison:
-        text = comparison + "生活面の変化を継続して確認します。"
-    elif absence + late + leave_early + infirmary + rainy >= 4:
-        text = "遅刻や保健室利用などが見られます。生活リズムや体調面の変化に注意が必要です。"
-    elif cloudy + rainy >= 3:
-        text = "心の天気に曇りや雨が見られます。気持ちの変化を丁寧に見守ります。"
+            text = "生活面は比較的落ち着いています。日々の様子を継続して見守ります。"
     else:
-        text = "選択した生活指標では、大きな乱れは見られません。安定した様子です。"
+        if total_signals >= 4:
+            text = "対象期間では生活面にやや変化が見られます。継続して様子を確認します。"
+        else:
+            text = "対象期間では生活面に大きな乱れは少ない状況です。"
     return fit_text(text, limit)
 
+
+def qualitative_learning_comment(
+    current: Dict[str, float],
+    previous: Optional[Dict[str, float]],
+    analysis_mode: str,
+    purpose: str,
+    selected_learning_columns: List[str],
+    limit: int,
+) -> str:
+    if not selected_learning_columns:
+        return fit_text("学習面の指標が選択されていません。", limit)
+
+    if "比較" in analysis_mode and previous:
+        decreased = []
+        increased = []
+        for metric in selected_learning_columns:
+            cur = current.get(metric, 0.0)
+            prev = previous.get(metric, 0.0)
+            if metric == "正解率":
+                if cur <= prev - 0.05:
+                    decreased.append(metric)
+                elif cur >= prev + 0.05:
+                    increased.append(metric)
+            else:
+                if cur < prev:
+                    decreased.append(metric)
+                elif cur > prev:
+                    increased.append(metric)
+
+        if decreased:
+            trend = "前期間より学習面に低下傾向が見られます。"
+        elif increased:
+            trend = "前期間より学習面に改善傾向が見られます。"
+        else:
+            trend = "前期間と比べて学習面に大きな変化は見られません。"
+
+        if purpose == "異常値を重視したコメント":
+            text = f"{trend}変化の大きい項目を確認します。"
+        elif purpose == "不登校を防ぐためのコメント":
+            text = f"{trend}学習意欲や負担感を確認します。"
+        else:
+            text = f"{trend}学習状況の推移を確認します。"
+        return fit_text(text, limit)
+
+    study = current.get("総学習時間", 0)
+    answers = current.get("解答数", 0)
+    rate = current.get("正解率", 0)
+
+    if purpose == "異常値を重視したコメント":
+        if study == 0 or answers == 0 or ("正解率" in selected_learning_columns and rate < 0.70):
+            text = "対象期間では学習面に気になる変化があります。未実施や低下を確認します。"
+        else:
+            text = "対象期間では学習面に大きな異常は少ない状況です。"
+    elif purpose == "不登校を防ぐためのコメント":
+        text = "学習面の取り組み状況を確認し、負担感がないか見守ります。"
+    elif "正解率" in selected_learning_columns and rate < 0.70:
+        text = "対象期間では学習面にやや課題が見られます。理解状況を確認します。"
+    else:
+        text = "対象期間では学習面の取り組みが確認できます。継続して見守ります。"
+    return fit_text(text, limit)
+
+def generate_life_comment(
+    current: Dict[str, float],
+    previous: Optional[Dict[str, float]],
+    analysis_mode: str,
+    purpose: str,
+    selected_life_columns: List[str],
+    comment_type: str,
+    limit: int = 50,
+) -> str:
+    if comment_type == "定性的なコメント":
+        return qualitative_life_comment(current, previous, analysis_mode, purpose, selected_life_columns, limit)
+
+    if not selected_life_columns:
+        return fit_text("生活面の指標が選択されていません。", limit)
+
+    absence_metrics = [m for m in ["病気欠席数", "事故欠席数"] if m in selected_life_columns]
+    key_life_metrics = [
+        m
+        for m in ["病気欠席数", "事故欠席数", "遅刻数", "早退数", "保健室利用数", "心の天気雨数", "心の天気曇り数"]
+        if m in selected_life_columns
+    ]
+    if not key_life_metrics:
+        key_life_metrics = selected_life_columns
+
+    absence = sum(current.get(m, 0) for m in absence_metrics)
+    late = current.get("遅刻数", 0)
+    leave_early = current.get("早退数", 0)
+    infirmary = current.get("保健室利用数", 0)
+    cloudy = current.get("心の天気曇り数", 0)
+    rainy = current.get("心の天気雨数", 0)
+
+    if "比較" in analysis_mode:
+        summary = summarize_selected_changes(current, previous, key_life_metrics, max_items=2)
+        if purpose == "異常値を重視したコメント":
+            text = f"前期間比で{summary}。変化の大きい項目を確認します。"
+        elif purpose == "不登校を防ぐためのコメント":
+            text = f"前期間比で{summary}。登校状況や体調面を確認します。"
+        else:
+            text = f"前期間比で{summary}。生活面の変化を確認します。"
+        return fit_text(text, limit)
+
+    summary = summarize_selected_totals(current, key_life_metrics, max_items=3)
+    if purpose == "異常値を重視したコメント":
+        text = f"対象期間は{summary}。数値が目立つ項目を優先して確認します。"
+    elif purpose == "不登校を防ぐためのコメント":
+        if absence + late + leave_early + infirmary + rainy >= 4:
+            text = f"対象期間は{summary}。生活面の変化に早めに声かけします。"
+        else:
+            text = f"対象期間は{summary}。普段の様子と合わせて見守ります。"
+    else:
+        if absence + late + leave_early + infirmary + cloudy + rainy >= 4:
+            text = f"対象期間は{summary}。生活面に変化が見られます。"
+        else:
+            text = f"対象期間は{summary}。大きな乱れは少ない状況です。"
+    return fit_text(text, limit)
 
 def generate_learning_comment(
     current: Dict[str, float],
@@ -285,8 +485,12 @@ def generate_learning_comment(
     analysis_mode: str,
     purpose: str,
     selected_learning_columns: List[str],
+    comment_type: str,
     limit: int = 50,
 ) -> str:
+    if comment_type == "定性的なコメント":
+        return qualitative_learning_comment(current, previous, analysis_mode, purpose, selected_learning_columns, limit)
+
     if not selected_learning_columns:
         return fit_text("学習面の指標が選択されていません。", limit)
 
@@ -294,52 +498,36 @@ def generate_learning_comment(
     answers = current.get("解答数", 0)
     rate = current.get("正解率", 0)
 
-    if previous:
+    if "比較" in analysis_mode and previous:
+        summary = summarize_selected_changes(current, previous, selected_learning_columns, max_items=2)
         prev_study = previous.get("総学習時間", 0)
         prev_answers = previous.get("解答数", 0)
         prev_rate = previous.get("正解率", 0)
-    else:
-        prev_study = prev_answers = prev_rate = 0
 
-    if "比較" in analysis_mode and previous:
-        if "総学習時間" in selected_learning_columns and "解答数" in selected_learning_columns and study < prev_study * 0.8 and answers < prev_answers * 0.8:
-            text = "前期間より学習量が減っています。取り組み状況の変化を確認します。"
-        elif "正解率" in selected_learning_columns and rate + 0.05 < prev_rate:
-            text = "前期間より正解率が下がっています。理解度の変化を確認します。"
-        elif ("総学習時間" in selected_learning_columns and study > prev_study * 1.2) or ("解答数" in selected_learning_columns and answers > prev_answers * 1.2):
-            text = "前期間より学習量が増えています。取り組みの継続を見守ります。"
+        if purpose == "異常値を重視したコメント":
+            text = f"前期間比で{summary}。変化の大きい項目を確認します。"
+        elif purpose == "不登校を防ぐためのコメント":
+            text = f"前期間比で{summary}。学習意欲や負担感を確認します。"
+        elif (
+            ("総学習時間" in selected_learning_columns and study < prev_study)
+            or ("解答数" in selected_learning_columns and answers < prev_answers)
+            or ("正解率" in selected_learning_columns and rate < prev_rate)
+        ):
+            text = f"前期間比で{summary}。学習面は低下傾向です。"
         else:
-            text = "前期間と比べて、選択した学習指標に大きな変化は見られません。"
+            text = f"前期間比で{summary}。学習面の推移を確認します。"
         return fit_text(text, limit)
 
+    summary = summarize_selected_totals(current, selected_learning_columns, max_items=3)
     if purpose == "異常値を重視したコメント":
-        if (("解答数" in selected_learning_columns and answers == 0) or ("総学習時間" in selected_learning_columns and study == 0)):
-            text = "学習記録が少ない日があります。取り組み状況の確認が必要です。"
-        elif "正解率" in selected_learning_columns and rate < 0.70:
-            text = "正解率が低めです。理解が難しい単元がないか確認します。"
-        else:
-            text = "選択した学習指標では、特に目立つ異常値は見られません。"
-        return fit_text(text, limit)
-
-    if purpose == "不登校を防ぐためのコメント":
-        if ("総学習時間" in selected_learning_columns and study < 180) or ("解答数" in selected_learning_columns and answers < 80):
-            text = "学習量が少なめです。無理のない範囲で取り組みを確認します。"
-        elif "正解率" in selected_learning_columns and rate < 0.75:
-            text = "正解率に課題が見られます。理解度に応じた支援を検討します。"
-        else:
-            text = "学習への取り組みは一定程度見られます。継続して見守ります。"
-        return fit_text(text, limit)
-
-    if ("総学習時間" in selected_learning_columns and study == 0) and ("解答数" in selected_learning_columns and answers == 0):
-        text = "学習記録が確認できません。対象期間の取り組み状況を確認します。"
-    elif "正解率" in selected_learning_columns and rate < 0.70:
-        text = "学習には取り組んでいますが、正解率は低めです。理解度を確認します。"
-    elif ("総学習時間" in selected_learning_columns and study >= 250) or ("解答数" in selected_learning_columns and answers >= 120):
-        text = "学習時間や解答数は十分に見られます。取り組みは継続できています。"
+        text = f"対象期間は{summary}。低下や未実施の有無を確認します。"
+    elif purpose == "不登校を防ぐためのコメント":
+        text = f"対象期間は{summary}。無理のない学習状況を確認します。"
+    elif ("正解率" in selected_learning_columns and rate < 0.70):
+        text = f"対象期間は{summary}。正解率が低めです。"
     else:
-        text = "選択した学習指標では、一定程度の取り組みが見られます。"
+        text = f"対象期間は{summary}。学習面の取り組みを確認します。"
     return fit_text(text, limit)
-
 
 def generate_generic_comment(
     current: Dict[str, float],
@@ -348,10 +536,11 @@ def generate_generic_comment(
     purpose: str,
     selected_life_columns: List[str],
     selected_learning_columns: List[str],
+    comment_type: str,
     limit: int = 100,
 ) -> str:
-    life = generate_life_comment(current, previous, analysis_mode, purpose, selected_life_columns, limit=55)
-    learning = generate_learning_comment(current, previous, analysis_mode, purpose, selected_learning_columns, limit=55)
+    life = generate_life_comment(current, previous, analysis_mode, purpose, selected_life_columns, comment_type, limit=55)
+    learning = generate_learning_comment(current, previous, analysis_mode, purpose, selected_learning_columns, comment_type, limit=55)
     text = f"{life}{learning}"
     return fit_text(text, limit)
 
@@ -362,20 +551,21 @@ def generate_comments(
     analysis_mode: str,
     view_mode: str,
     purpose: str,
+    comment_type: str,
     selected_life_columns: List[str],
     selected_learning_columns: List[str],
 ) -> Dict[str, str]:
     if view_mode.startswith("1枠"):
         return {
-            "汎用的なコメント": generate_generic_comment(current, previous, analysis_mode, purpose, selected_life_columns, selected_learning_columns, limit=100),
+            "汎用的なコメント": generate_generic_comment(current, previous, analysis_mode, purpose, selected_life_columns, selected_learning_columns, comment_type, limit=100),
             "生活の様子コメント": "",
             "学習の様子コメント": "",
         }
 
     return {
         "汎用的なコメント": "",
-        "生活の様子コメント": generate_life_comment(current, previous, analysis_mode, purpose, selected_life_columns, limit=50),
-        "学習の様子コメント": generate_learning_comment(current, previous, analysis_mode, purpose, selected_learning_columns, limit=50),
+        "生活の様子コメント": generate_life_comment(current, previous, analysis_mode, purpose, selected_life_columns, comment_type, limit=50),
+        "学習の様子コメント": generate_learning_comment(current, previous, analysis_mode, purpose, selected_learning_columns, comment_type, limit=50),
     }
 
 
@@ -505,6 +695,7 @@ with st.sidebar:
     analysis_mode = st.radio("評価するデータ断面", ANALYSIS_MODES)
     view_mode = st.radio("コメント枠", COMMENT_VIEW_MODES)
     purpose = st.radio("コメントの方針", COMMENT_PURPOSES)
+    comment_type = st.radio("コメントの種類", COMMENT_TYPES)
 
     st.markdown("---")
     st.subheader("使う指標")
@@ -530,6 +721,7 @@ comments = generate_comments(
     analysis_mode,
     view_mode,
     purpose,
+    comment_type,
     selected_life_columns,
     selected_learning_columns,
 )
