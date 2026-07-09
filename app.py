@@ -330,11 +330,11 @@ def qualitative_life_comment(
     if "比較" in analysis_mode:
         base = diff_message(current, previous, key_life_metrics)
         if purpose == "異常値を重視したコメント":
-            text = f"{base}変化が目立つ項目を優先して確認します。"
+            text = f"{base}変化が目立つ項目を優先して確認してください。"
         elif purpose == "不登校を防ぐためのコメント":
-            text = f"{base}登校状況や生活リズムの変化を確認します。"
+            text = f"{base}登校状況や生活リズムの変化を確認してください。"
         else:
-            text = f"{base}生活面の変化を継続して確認します。"
+            text = f"{base}生活面の変化を継続して確認してください。"
         return fit_text(text, limit)
 
     absence = current.get("病気欠席数", 0) + current.get("事故欠席数", 0)
@@ -347,17 +347,17 @@ def qualitative_life_comment(
 
     if purpose == "異常値を重視したコメント":
         if total_signals >= 4:
-            text = "対象期間では生活面に気になる変化があります。目立つ項目を優先して確認します。"
+            text = "対象期間では生活面に気になる変化があります。目立つ項目を優先して確認してください。"
         else:
             text = "対象期間では生活面の大きな変化は少ない状況です。"
     elif purpose == "不登校を防ぐためのコメント":
         if absence + late + infirmary + rainy >= 4:
-            text = "生活面に変化が見られます。登校状況や体調面を早めに確認します。"
+            text = "生活面に変化が見られます。登校状況や体調面を早めに確認してください。"
         else:
             text = "生活面は比較的落ち着いています。日々の様子を継続して見守ります。"
     else:
         if total_signals >= 4:
-            text = "対象期間では生活面にやや変化が見られます。継続して様子を確認します。"
+            text = "対象期間では生活面にやや変化が見られます。継続して様子を確認してください。"
         else:
             text = "対象期間では生活面に大きな乱れは少ない状況です。"
     return fit_text(text, limit)
@@ -399,11 +399,11 @@ def qualitative_learning_comment(
             trend = "前期間と比べて学習面に大きな変化は見られません。"
 
         if purpose == "異常値を重視したコメント":
-            text = f"{trend}変化の大きい項目を確認します。"
+            text = f"{trend}変化の大きい項目を確認してください。"
         elif purpose == "不登校を防ぐためのコメント":
-            text = f"{trend}学習意欲や負担感を確認します。"
+            text = f"{trend}学習意欲や負担感を確認してください。"
         else:
-            text = f"{trend}学習状況の推移を確認します。"
+            text = f"{trend}学習状況の推移を確認してください。"
         return fit_text(text, limit)
 
     study = current.get("総学習時間", 0)
@@ -412,13 +412,13 @@ def qualitative_learning_comment(
 
     if purpose == "異常値を重視したコメント":
         if study == 0 or answers == 0 or ("正解率" in selected_learning_columns and rate < 0.70):
-            text = "対象期間では学習面に気になる変化があります。未実施や低下を確認します。"
+            text = "対象期間では学習面に気になる変化があります。未実施や低下を確認してください。"
         else:
             text = "対象期間では学習面に大きな異常は少ない状況です。"
     elif purpose == "不登校を防ぐためのコメント":
         text = "学習面の取り組み状況を確認し、負担感がないか見守ります。"
     elif "正解率" in selected_learning_columns and rate < 0.70:
-        text = "対象期間では学習面にやや課題が見られます。理解状況を確認します。"
+        text = "対象期間では学習面にやや課題が見られます。理解状況を確認してください。"
     else:
         text = "対象期間では学習面の取り組みが確認できます。継続して見守ります。"
     return fit_text(text, limit)
@@ -457,16 +457,16 @@ def generate_life_comment(
     if "比較" in analysis_mode:
         summary = summarize_selected_changes(current, previous, key_life_metrics, max_items=2)
         if purpose == "異常値を重視したコメント":
-            text = f"前期間比で{summary}。変化の大きい項目を確認します。"
+            text = f"前期間比で{summary}。変化の大きい項目を確認してください。"
         elif purpose == "不登校を防ぐためのコメント":
-            text = f"前期間比で{summary}。登校状況や体調面を確認します。"
+            text = f"前期間比で{summary}。登校状況や体調面を確認してください。"
         else:
-            text = f"前期間比で{summary}。生活面の変化を確認します。"
+            text = f"前期間比で{summary}。生活面の変化を確認してください。"
         return fit_text(text, limit)
 
     summary = summarize_selected_totals(current, key_life_metrics, max_items=3)
     if purpose == "異常値を重視したコメント":
-        text = f"対象期間は{summary}。数値が目立つ項目を優先して確認します。"
+        text = f"対象期間は{summary}。数値が目立つ項目を優先して確認してください。"
     elif purpose == "不登校を防ぐためのコメント":
         if absence + late + leave_early + infirmary + rainy >= 4:
             text = f"対象期間は{summary}。生活面の変化に早めに声かけします。"
@@ -505,9 +505,9 @@ def generate_learning_comment(
         prev_rate = previous.get("正解率", 0)
 
         if purpose == "異常値を重視したコメント":
-            text = f"前期間比で{summary}。変化の大きい項目を確認します。"
+            text = f"前期間比で{summary}。変化の大きい項目を確認してください。"
         elif purpose == "不登校を防ぐためのコメント":
-            text = f"前期間比で{summary}。学習意欲や負担感を確認します。"
+            text = f"前期間比で{summary}。学習意欲や負担感を確認してください。"
         elif (
             ("総学習時間" in selected_learning_columns and study < prev_study)
             or ("解答数" in selected_learning_columns and answers < prev_answers)
@@ -515,18 +515,18 @@ def generate_learning_comment(
         ):
             text = f"前期間比で{summary}。学習面は低下傾向です。"
         else:
-            text = f"前期間比で{summary}。学習面の推移を確認します。"
+            text = f"前期間比で{summary}。学習面の推移を確認してください。"
         return fit_text(text, limit)
 
     summary = summarize_selected_totals(current, selected_learning_columns, max_items=3)
     if purpose == "異常値を重視したコメント":
-        text = f"対象期間は{summary}。低下や未実施の有無を確認します。"
+        text = f"対象期間は{summary}。低下や未実施の有無を確認してください。"
     elif purpose == "不登校を防ぐためのコメント":
-        text = f"対象期間は{summary}。無理のない学習状況を確認します。"
+        text = f"対象期間は{summary}。無理のない学習状況を確認してください。"
     elif ("正解率" in selected_learning_columns and rate < 0.70):
         text = f"対象期間は{summary}。正解率が低めです。"
     else:
-        text = f"対象期間は{summary}。学習面の取り組みを確認します。"
+        text = f"対象期間は{summary}。学習面の取り組みを確認してください。"
     return fit_text(text, limit)
 
 def generate_generic_comment(
