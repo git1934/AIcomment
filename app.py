@@ -539,10 +539,59 @@ def generate_generic_comment(
     comment_type: str,
     limit: int = 100,
 ) -> str:
-    life = generate_life_comment(current, previous, analysis_mode, purpose, selected_life_columns, comment_type, limit=55)
-    learning = generate_learning_comment(current, previous, analysis_mode, purpose, selected_learning_columns, comment_type, limit=55)
-    text = f"{life}{learning}"
-    return fit_text(text, limit)
+    """
+    1枠表示用の汎用コメントを生成する。
+
+    生活・学習のどちらか一方だけを選んだ場合は、選択されている指標だけで
+    コメントを作る。未選択側の「指標が選択されていません」という文言は表示しない。
+    """
+    has_life = len(selected_life_columns) > 0
+    has_learning = len(selected_learning_columns) > 0
+
+    if has_life and has_learning:
+        life = generate_life_comment(
+            current,
+            previous,
+            analysis_mode,
+            purpose,
+            selected_life_columns,
+            comment_type,
+            limit=55,
+        )
+        learning = generate_learning_comment(
+            current,
+            previous,
+            analysis_mode,
+            purpose,
+            selected_learning_columns,
+            comment_type,
+            limit=55,
+        )
+        return fit_text(f"{life}{learning}", limit)
+
+    if has_life:
+        return generate_life_comment(
+            current,
+            previous,
+            analysis_mode,
+            purpose,
+            selected_life_columns,
+            comment_type,
+            limit=limit,
+        )
+
+    if has_learning:
+        return generate_learning_comment(
+            current,
+            previous,
+            analysis_mode,
+            purpose,
+            selected_learning_columns,
+            comment_type,
+            limit=limit,
+        )
+
+    return ""
 
 
 def generate_comments(
