@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -12,7 +14,7 @@ import streamlit as st
 # 基本設定
 # =========================================
 st.set_page_config(
-    page_title="AIコメントサンプル",
+    page_title="AIコメントアプリ",
     page_icon="📝",
     layout="wide",
 )
@@ -35,8 +37,6 @@ LEARNING_COLUMNS = [
     "解答数",
     "正解率",
 ]
-
-REQUIRED_COLUMNS = ["日付", "児童ID"] + LIFE_COLUMNS + LEARNING_COLUMNS
 
 ANALYSIS_MODES = [
     "過去1週間の傾向",
@@ -111,11 +111,7 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df.sort_values(["児童ID", "日付"]).reset_index(drop=True)
 
 
-def determine_period(
-    df: pd.DataFrame,
-    analysis_mode: str,
-    custom_range: Optional[Tuple[pd.Timestamp, pd.Timestamp]] = None,
-) -> PeriodSetting:
+def determine_period(df: pd.DataFrame, analysis_mode: str) -> PeriodSetting:
     """評価断面に応じて、対象期間と比較期間を決める。"""
     max_date = pd.Timestamp(df["日付"].max()).normalize()
 
@@ -333,37 +329,6 @@ def generate_generic_comment(
     return fit_text(text, limit)
 
 
-def create_summary_table(current: Dict[str, float], previous: Optional[Dict[str, float]]) -> pd.DataFrame:
-    rows = []
-    display_cols = [
-        "病気欠席数",
-        "事故欠席数",
-        "遅刻数",
-        "早退数",
-        "保健室利用数",
-        "心の天気晴れ数",
-        "心の天気曇り数",
-        "心の天気雨数",
-        "総学習時間",
-        "解答数",
-        "正解率",
-    ]
-
-    for col in display_cols:
-        cur = current.get(col, 0)
-        prev = previous.get(col, None) if previous else None
-        if col == "正解率":
-            cur_display = f"{cur:.1%}"
-            prev_display = f"{prev:.1%}" if prev is not None else "-"
-            diff_display = f"{cur - prev:+.1%}" if prev is not None else "-"
-        else:
-            cur_display = int(round(cur))
-            prev_display = int(round(prev)) if prev is not None else "-"
-            diff_display = int(round(cur - prev)) if prev is not None else "-"
-        rows.append({"指標": col, "対象期間": cur_display, "比較期間": prev_display, "差分": diff_display})
-    return pd.DataFrame(rows)
-
-
 def generate_comments(
     current: Dict[str, float],
     previous: Optional[Dict[str, float]],
@@ -385,10 +350,98 @@ def generate_comments(
     }
 
 
+def render_comment_box(title: str, text: str, animate: bool = True) -> None:
+    """AIが文章を生成しているように、コメントを1文字ずつ表示する。"""
+    placeholder = st.empty()
+
+    def box_html(body: str) -> str:
+        return f"""
+        <div class="comment-card">
+            <div class="comment-card-title">{html.escape(title)}</div>
+            <div class="comment-card-body">{html.escape(body)}</div>
+        </div>
+        """
+
+    if not animate:
+        placeholder.markdown(box_html(text), unsafe_allow_html=True)
+        return
+
+    display_text = ""
+    for ch in text:
+        display_text += ch
+        placeholder.markdown(box_html(display_text + "▌"), unsafe_allow_html=True)
+        time.sleep(0.018)
+    placeholder.markdown(box_html(text), unsafe_allow_html=True)
+
+
+def render_comment_page(
+    comments: Dict[str, str],
+    view_mode: str,
+) -> None:
+    st.subheader("AIコメント")
+
+    if view_mode.startswith("1枠"):
+        render_comment_box("汎用的なコメント", comments["汎用的なコメント"])
+        return
+
+    c1, c2 = st.columns(2)
+    with c1:
+        render_comment_box("生活の様子コメント", comments["生活の様子コメント"])
+    with c2:
+        render_comment_box("学習の様子コメント", comments["学習の様子コメント"])
+
+
+def render_data_page(current_df: pd.DataFrame, period: PeriodSetting) -> None:
+    st.subheader("対象期間のデータ")
+    st.caption(
+        f"対象期間：{period.current_start:%Y/%m/%d} 〜 {period.current_end:%Y/%m/%d}"
+    )
+    display_df = current_df.drop(columns=["児童ID"], errors="ignore").copy()
+    display_df["日付"] = display_df["日付"].dt.strftime("%Y/%m/%d")
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+
+# =========================================
+# スタイル
+# =========================================
+st.markdown(
+    """
+    <style>
+    .block-container {
+        padding-top: 2rem;
+    }
+    .comment-card {
+        background: #fffef8;
+        border: 2px solid #f3c96b;
+        border-radius: 18px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+        padding: 22px 24px;
+        margin-top: 12px;
+        min-height: 150px;
+    }
+    .comment-card-title {
+        font-size: 18px;
+        font-weight: 700;
+        margin-bottom: 12px;
+        color: #7a4d00;
+    }
+    .comment-card-body {
+        font-size: 24px;
+        line-height: 1.85;
+        font-weight: 600;
+        color: #1f2937;
+        word-break: break-word;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
 # =========================================
 # 画面
 # =========================================
-st.title("AIコメントサンプル")
+st.title("AIコメントアプリ")
 
 try:
     raw_df = load_sample_data()
@@ -403,41 +456,24 @@ selected_student = student_ids[0]
 student_df = df[df["児童ID"] == selected_student]
 
 with st.sidebar:
-    st.header("AIコメント定義")
+    page = st.radio(
+        "ページ",
+        ["AIコメント", "対象期間のデータ"],
+    )
 
-    analysis_mode = st.selectbox("評価するデータ断面", ANALYSIS_MODES)
+    st.header("AIコメント定義")
+    analysis_mode = st.radio("評価するデータ断面", ANALYSIS_MODES)
     view_mode = st.radio("コメント枠", COMMENT_VIEW_MODES)
     purpose = st.radio("コメントの目的", COMMENT_PURPOSES)
 
-custom_range = None
-
-period = determine_period(df, analysis_mode, custom_range)
+period = determine_period(df, analysis_mode)
 current_df = filter_period(student_df, period.current_start, period.current_end)
 previous_df = filter_period(student_df, period.previous_start, period.previous_end) if period.has_previous else None
 current_agg = aggregate(current_df)
 previous_agg = aggregate(previous_df) if previous_df is not None else None
 comments = generate_comments(current_agg, previous_agg, analysis_mode, view_mode, purpose)
 
-st.subheader("生成コメント")
-if view_mode.startswith("1枠"):
-    st.text_area("汎用的なコメント（100文字以内目安）", comments["汎用的なコメント"], height=110)
+if page == "AIコメント":
+    render_comment_page(comments, view_mode)
 else:
-    c1, c2 = st.columns(2)
-    with c1:
-        st.text_area("生活の様子コメント（50文字以内目安）", comments["生活の様子コメント"], height=110)
-    with c2:
-        st.text_area("学習の様子コメント（50文字以内目安）", comments["学習の様子コメント"], height=110)
-
-st.subheader("対象期間のデータ")
-st.dataframe(current_df.drop(columns=["児童ID"], errors="ignore"), use_container_width=True)
-
-with st.expander("この試作アプリの前提"):
-    st.markdown(
-        """
-- この試作では、生成AI APIは呼び出していません。
-- 1人分のサンプルデータをアプリ内で読み込んでいます。
-- 1枠表示では、生活面と学習面をまとめた汎用コメントを生成します。
-- 2枠表示では、生活の様子コメントと学習の様子コメントを別々に生成します。
-- 前月との比較は、暦月ではなく「直近30日」と「その前30日」の比較として扱っています。
-        """
-    )
+    render_data_page(current_df, period)
