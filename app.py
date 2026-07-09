@@ -12,7 +12,7 @@ import streamlit as st
 # 基本設定
 # =========================================
 st.set_page_config(
-    page_title="日本語コメント生成アプリ（試作）",
+    page_title="AIコメントサンプル",
     page_icon="📝",
     layout="wide",
 )
@@ -43,7 +43,6 @@ ANALYSIS_MODES = [
     "過去1か月の傾向",
     "前週との比較",
     "前月との比較",
-    "任意期間",
 ]
 
 COMMENT_VIEW_MODES = [
@@ -53,7 +52,7 @@ COMMENT_VIEW_MODES = [
 
 COMMENT_PURPOSES = [
     "汎用的なコメント",
-    "早期支援につなげるコメント",
+    "不登校を防ぐためのコメント",
     "異常値を重視したコメント",
 ]
 
@@ -142,12 +141,6 @@ def determine_period(
             previous_start=max_date - pd.Timedelta(days=59),
             previous_end=max_date - pd.Timedelta(days=30),
         )
-
-    if analysis_mode == "任意期間":
-        if custom_range is None:
-            return PeriodSetting(max_date - pd.Timedelta(days=6), max_date)
-        start, end = custom_range
-        return PeriodSetting(pd.Timestamp(start).normalize(), pd.Timestamp(end).normalize())
 
     return PeriodSetting(max_date - pd.Timedelta(days=6), max_date)
 
@@ -249,7 +242,7 @@ def generate_life_comment(
             text = "生活面で特に目立つ異常値は見られません。引き続き様子を確認します。"
         return fit_text(text, limit)
 
-    if purpose == "早期支援につなげるコメント":
+    if purpose == "不登校を防ぐためのコメント":
         if absence + late + leave_early + infirmary + rainy >= 4:
             text = "生活面に複数の変化が見られます。無理のない声かけで様子を確認します。"
         elif late + infirmary + rainy >= 2:
@@ -307,7 +300,7 @@ def generate_learning_comment(
             text = "学習面で特に目立つ異常値は見られません。"
         return fit_text(text, limit)
 
-    if purpose == "早期支援につなげるコメント":
+    if purpose == "不登校を防ぐためのコメント":
         if study < 180 or answers < 80:
             text = "学習量が少なめです。無理のない範囲で取り組みを確認します。"
         elif rate < 0.75:
@@ -395,8 +388,7 @@ def generate_comments(
 # =========================================
 # 画面
 # =========================================
-st.title("📝 日本語コメント生成アプリ（試作）")
-st.caption("評価するデータ断面とコメント形式を選ぶと、生活面／学習面のコメントを自動生成します。生成AI APIは使っていません。")
+st.title("AIコメントサンプル")
 
 try:
     raw_df = load_sample_data()
@@ -411,24 +403,13 @@ selected_student = student_ids[0]
 student_df = df[df["児童ID"] == selected_student]
 
 with st.sidebar:
-    st.header("コメント設定")
+    st.header("AIコメント定義")
 
     analysis_mode = st.selectbox("評価するデータ断面", ANALYSIS_MODES)
+    view_mode = st.radio("コメント枠", COMMENT_VIEW_MODES)
+    purpose = st.radio("コメントの目的", COMMENT_PURPOSES)
 
-    custom_range = None
-    if analysis_mode == "任意期間":
-        min_date = pd.Timestamp(df["日付"].min()).date()
-        max_date = pd.Timestamp(df["日付"].max()).date()
-        start_date, end_date = st.date_input(
-            "任意期間",
-            value=(min_date, max_date),
-            min_value=min_date,
-            max_value=max_date,
-        )
-        custom_range = (pd.Timestamp(start_date), pd.Timestamp(end_date))
-
-    view_mode = st.radio("コメント形式", COMMENT_VIEW_MODES)
-    purpose = st.selectbox("コメントの目的", COMMENT_PURPOSES)
+custom_range = None
 
 period = determine_period(df, analysis_mode, custom_range)
 current_df = filter_period(student_df, period.current_start, period.current_end)
@@ -436,18 +417,6 @@ previous_df = filter_period(student_df, period.previous_start, period.previous_e
 current_agg = aggregate(current_df)
 previous_agg = aggregate(previous_df) if previous_df is not None else None
 comments = generate_comments(current_agg, previous_agg, analysis_mode, view_mode, purpose)
-
-st.subheader("設定内容")
-col1, col2 = st.columns(2)
-col1.metric("評価断面", analysis_mode)
-col2.metric("コメント形式", view_mode.split("：")[0])
-
-period_text = f"{period.current_start.date()} 〜 {period.current_end.date()}"
-if period.has_previous:
-    previous_text = f"{period.previous_start.date()} 〜 {period.previous_end.date()}"  # type: ignore[union-attr]
-    st.write(f"**対象期間：** {period_text}　／　**比較期間：** {previous_text}")
-else:
-    st.write(f"**対象期間：** {period_text}")
 
 st.subheader("生成コメント")
 if view_mode.startswith("1枠"):
@@ -458,9 +427,6 @@ else:
         st.text_area("生活の様子コメント（50文字以内目安）", comments["生活の様子コメント"], height=110)
     with c2:
         st.text_area("学習の様子コメント（50文字以内目安）", comments["学習の様子コメント"], height=110)
-
-st.subheader("集計結果")
-st.dataframe(create_summary_table(current_agg, previous_agg), use_container_width=True)
 
 st.subheader("対象期間のデータ")
 st.dataframe(current_df.drop(columns=["児童ID"], errors="ignore"), use_container_width=True)
