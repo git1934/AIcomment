@@ -741,10 +741,10 @@ if "show_data_page" not in st.session_state:
 
 with st.sidebar:
     st.header("AIコメント定義")
-    analysis_mode = st.radio("評価するデータ断面", ANALYSIS_MODES)
     view_mode = st.radio("コメント枠", COMMENT_VIEW_MODES)
     purpose = st.radio("コメントの方針", COMMENT_PURPOSES)
     comment_type = st.radio("コメントの種類", COMMENT_TYPES)
+    analysis_mode = st.radio("評価するデータ断面", ANALYSIS_MODES)
 
     st.markdown("---")
     st.subheader("使う指標")
