@@ -4,7 +4,7 @@ import html
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import pandas as pd
 import streamlit as st
@@ -145,27 +145,40 @@ def filter_period(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> p
     return df[(df["日付"] >= start) & (df["日付"] <= end)].copy()
 
 
-def aggregate(df: pd.DataFrame) -> Dict[str, float]:
-    """コメント生成に必要な集計値を作る。"""
-    result: Dict[str, float] = {}
+def aggregate(df: pd.DataFrame, life_columns: List[str], learning_columns: List[str]) -> Dict[str, float]:
+    """コメント生成に必要な集計値を作る。未選択の指標はコメント判定に使わない。"""
+    result: Dict[str, float] = {"記録日数": float(len(df))}
+
     for col in LIFE_COLUMNS:
-        result[col] = float(df[col].sum()) if col in df.columns else 0.0
+        if col in life_columns:
+            result[col] = float(df[col].sum()) if col in df.columns else 0.0
+        else:
+            result[col] = 0.0
 
-    total_study = float(df["総学習時間"].sum()) if "総学習時間" in df.columns else 0.0
-    total_answers = float(df["解答数"].sum()) if "解答数" in df.columns else 0.0
+    if "総学習時間" in learning_columns:
+        total_study = float(df["総学習時間"].sum()) if "総学習時間" in df.columns else 0.0
+    else:
+        total_study = 0.0
 
-    # 正解率は、解答数で重み付けした平均を基本にする
-    if total_answers > 0 and "正解率" in df.columns:
-        weighted_correct_rate = float((df["正解率"] * df["解答数"]).sum() / total_answers)
-    elif "正解率" in df.columns and len(df) > 0:
-        weighted_correct_rate = float(df["正解率"].mean())
+    if "解答数" in learning_columns:
+        total_answers = float(df["解答数"].sum()) if "解答数" in df.columns else 0.0
+    else:
+        total_answers = 0.0
+
+    # 正解率は、正解率が選択されている場合のみ使う。
+    if "正解率" in learning_columns and "正解率" in df.columns and len(df) > 0:
+        if "解答数" in df.columns and float(df["解答数"].sum()) > 0:
+            weighted_correct_rate = float((df["正解率"] * df["解答数"]).sum() / df["解答数"].sum())
+        else:
+            weighted_correct_rate = float(df["正解率"].mean())
     else:
         weighted_correct_rate = 0.0
 
     result["総学習時間"] = total_study
     result["解答数"] = total_answers
     result["正解率"] = weighted_correct_rate
-    result["記録日数"] = float(len(df))
+    result["生活指標選択数"] = float(len(life_columns))
+    result["学習指標選択数"] = float(len(learning_columns))
     return result
 
 
@@ -210,8 +223,12 @@ def generate_life_comment(
     previous: Optional[Dict[str, float]],
     analysis_mode: str,
     purpose: str,
+    selected_life_columns: List[str],
     limit: int = 50,
 ) -> str:
+    if not selected_life_columns:
+        return fit_text("生活面の指標が選択されていません。", limit)
+
     absence = current.get("病気欠席数", 0) + current.get("事故欠席数", 0)
     late = current.get("遅刻数", 0)
     leave_early = current.get("早退数", 0)
@@ -219,23 +236,27 @@ def generate_life_comment(
     cloudy = current.get("心の天気曇り数", 0)
     rainy = current.get("心の天気雨数", 0)
 
-    comparison_keys = ["病気欠席数", "遅刻数", "早退数", "保健室利用数", "心の天気雨数"]
+    comparison_keys = [
+        col
+        for col in ["病気欠席数", "事故欠席数", "遅刻数", "早退数", "保健室利用数", "心の天気雨数"]
+        if col in selected_life_columns
+    ]
     comparison = diff_message(current, previous, comparison_keys) if "比較" in analysis_mode else ""
 
     if purpose == "異常値を重視したコメント":
         alerts = []
-        if late >= 2:
+        if "遅刻数" in selected_life_columns and late >= 2:
             alerts.append("遅刻")
-        if infirmary >= 2:
+        if "保健室利用数" in selected_life_columns and infirmary >= 2:
             alerts.append("保健室利用")
-        if rainy >= 2:
+        if "心の天気雨数" in selected_life_columns and rainy >= 2:
             alerts.append("心の天気の雨")
-        if absence >= 2:
+        if ({"病気欠席数", "事故欠席数"} & set(selected_life_columns)) and absence >= 2:
             alerts.append("欠席")
         if alerts:
             text = "・".join(alerts[:2]) + "が目立ちます。生活リズムや体調面の変化に注意が必要です。"
         else:
-            text = "生活面で特に目立つ異常値は見られません。引き続き様子を確認します。"
+            text = "選択した生活指標では、特に目立つ異常値は見られません。"
         return fit_text(text, limit)
 
     if purpose == "不登校を防ぐためのコメント":
@@ -244,7 +265,7 @@ def generate_life_comment(
         elif late + infirmary + rainy >= 2:
             text = "遅刻や体調面の変化が見られます。日常の声かけを通じて見守ります。"
         else:
-            text = "生活面は大きく乱れていません。普段の様子を継続して見守ります。"
+            text = "選択した生活指標では大きく乱れていません。普段の様子を見守ります。"
         return fit_text(text, limit)
 
     if comparison:
@@ -254,7 +275,7 @@ def generate_life_comment(
     elif cloudy + rainy >= 3:
         text = "心の天気に曇りや雨が見られます。気持ちの変化を丁寧に見守ります。"
     else:
-        text = "生活面は大きな乱れは見られません。安定した様子を継続して確認します。"
+        text = "選択した生活指標では、大きな乱れは見られません。安定した様子です。"
     return fit_text(text, limit)
 
 
@@ -263,8 +284,12 @@ def generate_learning_comment(
     previous: Optional[Dict[str, float]],
     analysis_mode: str,
     purpose: str,
+    selected_learning_columns: List[str],
     limit: int = 50,
 ) -> str:
+    if not selected_learning_columns:
+        return fit_text("学習面の指標が選択されていません。", limit)
+
     study = current.get("総学習時間", 0)
     answers = current.get("解答数", 0)
     rate = current.get("正解率", 0)
@@ -277,42 +302,42 @@ def generate_learning_comment(
         prev_study = prev_answers = prev_rate = 0
 
     if "比較" in analysis_mode and previous:
-        if study < prev_study * 0.8 and answers < prev_answers * 0.8:
+        if "総学習時間" in selected_learning_columns and "解答数" in selected_learning_columns and study < prev_study * 0.8 and answers < prev_answers * 0.8:
             text = "前期間より学習量が減っています。取り組み状況の変化を確認します。"
-        elif rate + 0.05 < prev_rate:
+        elif "正解率" in selected_learning_columns and rate + 0.05 < prev_rate:
             text = "前期間より正解率が下がっています。理解度の変化を確認します。"
-        elif study > prev_study * 1.2 or answers > prev_answers * 1.2:
+        elif ("総学習時間" in selected_learning_columns and study > prev_study * 1.2) or ("解答数" in selected_learning_columns and answers > prev_answers * 1.2):
             text = "前期間より学習量が増えています。取り組みの継続を見守ります。"
         else:
-            text = "前期間と比べて学習面に大きな変化は見られません。"
+            text = "前期間と比べて、選択した学習指標に大きな変化は見られません。"
         return fit_text(text, limit)
 
     if purpose == "異常値を重視したコメント":
-        if answers == 0 or study == 0:
+        if (("解答数" in selected_learning_columns and answers == 0) or ("総学習時間" in selected_learning_columns and study == 0)):
             text = "学習記録が少ない日があります。取り組み状況の確認が必要です。"
-        elif rate < 0.70:
+        elif "正解率" in selected_learning_columns and rate < 0.70:
             text = "正解率が低めです。理解が難しい単元がないか確認します。"
         else:
-            text = "学習面で特に目立つ異常値は見られません。"
+            text = "選択した学習指標では、特に目立つ異常値は見られません。"
         return fit_text(text, limit)
 
     if purpose == "不登校を防ぐためのコメント":
-        if study < 180 or answers < 80:
+        if ("総学習時間" in selected_learning_columns and study < 180) or ("解答数" in selected_learning_columns and answers < 80):
             text = "学習量が少なめです。無理のない範囲で取り組みを確認します。"
-        elif rate < 0.75:
+        elif "正解率" in selected_learning_columns and rate < 0.75:
             text = "正解率に課題が見られます。理解度に応じた支援を検討します。"
         else:
             text = "学習への取り組みは一定程度見られます。継続して見守ります。"
         return fit_text(text, limit)
 
-    if study == 0 and answers == 0:
+    if ("総学習時間" in selected_learning_columns and study == 0) and ("解答数" in selected_learning_columns and answers == 0):
         text = "学習記録が確認できません。対象期間の取り組み状況を確認します。"
-    elif rate < 0.70:
+    elif "正解率" in selected_learning_columns and rate < 0.70:
         text = "学習には取り組んでいますが、正解率は低めです。理解度を確認します。"
-    elif study >= 250 and answers >= 120:
-        text = "学習時間と解答数は十分に見られます。取り組みは継続できています。"
+    elif ("総学習時間" in selected_learning_columns and study >= 250) or ("解答数" in selected_learning_columns and answers >= 120):
+        text = "学習時間や解答数は十分に見られます。取り組みは継続できています。"
     else:
-        text = "学習には一定程度取り組んでいます。正解率の推移を確認します。"
+        text = "選択した学習指標では、一定程度の取り組みが見られます。"
     return fit_text(text, limit)
 
 
@@ -321,10 +346,12 @@ def generate_generic_comment(
     previous: Optional[Dict[str, float]],
     analysis_mode: str,
     purpose: str,
+    selected_life_columns: List[str],
+    selected_learning_columns: List[str],
     limit: int = 100,
 ) -> str:
-    life = generate_life_comment(current, previous, analysis_mode, purpose, limit=55)
-    learning = generate_learning_comment(current, previous, analysis_mode, purpose, limit=55)
+    life = generate_life_comment(current, previous, analysis_mode, purpose, selected_life_columns, limit=55)
+    learning = generate_learning_comment(current, previous, analysis_mode, purpose, selected_learning_columns, limit=55)
     text = f"{life}{learning}"
     return fit_text(text, limit)
 
@@ -335,28 +362,31 @@ def generate_comments(
     analysis_mode: str,
     view_mode: str,
     purpose: str,
+    selected_life_columns: List[str],
+    selected_learning_columns: List[str],
 ) -> Dict[str, str]:
     if view_mode.startswith("1枠"):
         return {
-            "汎用的なコメント": generate_generic_comment(current, previous, analysis_mode, purpose, limit=100),
+            "汎用的なコメント": generate_generic_comment(current, previous, analysis_mode, purpose, selected_life_columns, selected_learning_columns, limit=100),
             "生活の様子コメント": "",
             "学習の様子コメント": "",
         }
 
     return {
         "汎用的なコメント": "",
-        "生活の様子コメント": generate_life_comment(current, previous, analysis_mode, purpose, limit=50),
-        "学習の様子コメント": generate_learning_comment(current, previous, analysis_mode, purpose, limit=50),
+        "生活の様子コメント": generate_life_comment(current, previous, analysis_mode, purpose, selected_life_columns, limit=50),
+        "学習の様子コメント": generate_learning_comment(current, previous, analysis_mode, purpose, selected_learning_columns, limit=50),
     }
 
 
-def render_comment_box(title: str, text: str, animate: bool = True) -> None:
+def render_comment_box(title: str, text: str, box_type: str, animate: bool = True) -> None:
     """AIが文章を生成しているように、コメントを1文字ずつ表示する。"""
     placeholder = st.empty()
 
     def box_html(body: str) -> str:
+        safe_type = html.escape(box_type)
         return f"""
-        <div class="comment-card">
+        <div class="comment-card comment-card-{safe_type}">
             <div class="comment-card-title">{html.escape(title)}</div>
             <div class="comment-card-body">{html.escape(body)}</div>
         </div>
@@ -374,29 +404,26 @@ def render_comment_box(title: str, text: str, animate: bool = True) -> None:
     placeholder.markdown(box_html(text), unsafe_allow_html=True)
 
 
-def render_comment_page(
-    comments: Dict[str, str],
-    view_mode: str,
-) -> None:
-    st.subheader("AIコメント")
-
+def render_comment_page(comments: Dict[str, str], view_mode: str) -> None:
     if view_mode.startswith("1枠"):
-        render_comment_box("汎用的なコメント", comments["汎用的なコメント"])
+        render_comment_box("汎用的なコメント", comments["汎用的なコメント"], box_type="generic")
         return
 
     c1, c2 = st.columns(2)
     with c1:
-        render_comment_box("生活の様子コメント", comments["生活の様子コメント"])
+        render_comment_box("生活の様子コメント", comments["生活の様子コメント"], box_type="life")
     with c2:
-        render_comment_box("学習の様子コメント", comments["学習の様子コメント"])
+        render_comment_box("学習の様子コメント", comments["学習の様子コメント"], box_type="learning")
 
 
-def render_data_page(current_df: pd.DataFrame, period: PeriodSetting) -> None:
+def render_data_page(current_df: pd.DataFrame, period: PeriodSetting, selected_life_columns: List[str], selected_learning_columns: List[str]) -> None:
     st.subheader("対象期間のデータ")
     st.caption(
         f"対象期間：{period.current_start:%Y/%m/%d} 〜 {period.current_end:%Y/%m/%d}"
     )
-    display_df = current_df.drop(columns=["児童ID"], errors="ignore").copy()
+    selected_columns = ["日付"] + selected_life_columns + selected_learning_columns
+    selected_columns = [col for col in selected_columns if col in current_df.columns]
+    display_df = current_df[selected_columns].copy()
     display_df["日付"] = display_df["日付"].dt.strftime("%Y/%m/%d")
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
@@ -411,26 +438,41 @@ st.markdown(
         padding-top: 2rem;
     }
     .comment-card {
-        background: #fffef8;
-        border: 2px solid #f3c96b;
-        border-radius: 18px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-        padding: 22px 24px;
+        border-radius: 20px;
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.10);
+        padding: 24px 26px;
         margin-top: 12px;
-        min-height: 150px;
+        min-height: 168px;
+    }
+    .comment-card-generic {
+        background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%);
+        border: 2px solid #60a5fa;
+    }
+    .comment-card-life {
+        background: linear-gradient(135deg, #fff7ed 0%, #ffffff 100%);
+        border: 2px solid #fb923c;
+    }
+    .comment-card-learning {
+        background: linear-gradient(135deg, #f5f3ff 0%, #ffffff 100%);
+        border: 2px solid #a78bfa;
     }
     .comment-card-title {
-        font-size: 18px;
-        font-weight: 700;
-        margin-bottom: 12px;
-        color: #7a4d00;
+        font-size: 19px;
+        font-weight: 800;
+        margin-bottom: 14px;
+        color: #111827;
     }
     .comment-card-body {
-        font-size: 24px;
+        font-size: 25px;
         line-height: 1.85;
-        font-weight: 600;
-        color: #1f2937;
+        font-weight: 700;
+        color: #111827;
         word-break: break-word;
+    }
+    .stButton > button {
+        border-radius: 999px;
+        padding: 0.6rem 1.2rem;
+        font-weight: 700;
     }
     </style>
     """,
@@ -455,25 +497,51 @@ student_ids = sorted(df["児童ID"].unique().tolist())
 selected_student = student_ids[0]
 student_df = df[df["児童ID"] == selected_student]
 
-with st.sidebar:
-    page = st.radio(
-        "ページ",
-        ["AIコメント", "対象期間のデータ"],
-    )
+if "show_data_page" not in st.session_state:
+    st.session_state.show_data_page = False
 
+with st.sidebar:
     st.header("AIコメント定義")
     analysis_mode = st.radio("評価するデータ断面", ANALYSIS_MODES)
     view_mode = st.radio("コメント枠", COMMENT_VIEW_MODES)
     purpose = st.radio("コメントの目的", COMMENT_PURPOSES)
 
+    st.markdown("---")
+    st.subheader("使う指標")
+    selected_life_columns = st.multiselect(
+        "生活の様子コメントに使う指標",
+        LIFE_COLUMNS,
+        default=LIFE_COLUMNS,
+    )
+    selected_learning_columns = st.multiselect(
+        "学習の様子コメントに使う指標",
+        LEARNING_COLUMNS,
+        default=LEARNING_COLUMNS,
+    )
+
 period = determine_period(df, analysis_mode)
 current_df = filter_period(student_df, period.current_start, period.current_end)
 previous_df = filter_period(student_df, period.previous_start, period.previous_end) if period.has_previous else None
-current_agg = aggregate(current_df)
-previous_agg = aggregate(previous_df) if previous_df is not None else None
-comments = generate_comments(current_agg, previous_agg, analysis_mode, view_mode, purpose)
+current_agg = aggregate(current_df, selected_life_columns, selected_learning_columns)
+previous_agg = aggregate(previous_df, selected_life_columns, selected_learning_columns) if previous_df is not None else None
+comments = generate_comments(
+    current_agg,
+    previous_agg,
+    analysis_mode,
+    view_mode,
+    purpose,
+    selected_life_columns,
+    selected_learning_columns,
+)
 
-if page == "AIコメント":
-    render_comment_page(comments, view_mode)
+if st.session_state.show_data_page:
+    render_data_page(current_df, period, selected_life_columns, selected_learning_columns)
+    if st.button("AIコメントに戻る"):
+        st.session_state.show_data_page = False
+        st.rerun()
 else:
-    render_data_page(current_df, period)
+    render_comment_page(comments, view_mode)
+    st.markdown("---")
+    if st.button("対象期間のデータを表示する"):
+        st.session_state.show_data_page = True
+        st.rerun()
