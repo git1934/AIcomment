@@ -504,7 +504,7 @@ with st.sidebar:
     st.header("AIコメント定義")
     analysis_mode = st.radio("評価するデータ断面", ANALYSIS_MODES)
     view_mode = st.radio("コメント枠", COMMENT_VIEW_MODES)
-    purpose = st.radio("コメントの目的", COMMENT_PURPOSES)
+    purpose = st.radio("コメントの方針", COMMENT_PURPOSES)
 
     st.markdown("---")
     st.subheader("使う指標")
@@ -540,6 +540,8 @@ if st.session_state.show_data_page:
         st.session_state.show_data_page = False
         st.rerun()
 else:
+    st.header("A君へのAIコメント")
+    st.subheader("コメント枠")
     render_comment_page(comments, view_mode)
     st.markdown("---")
     if st.button("対象期間のデータを表示する"):
