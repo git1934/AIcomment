@@ -354,7 +354,7 @@ def qualitative_life_comment(
         if absence + late + infirmary + rainy >= 4:
             text = "生活面に変化が見られます。登校状況や体調面を早めに確認してください。"
         else:
-            text = "生活面は比較的落ち着いています。日々の様子を継続して見守ります。"
+            text = "生活面は比較的落ち着いています。日々の様子を継続して確認してください。"
     else:
         if total_signals >= 4:
             text = "対象期間では生活面にやや変化が見られます。継続して様子を確認してください。"
@@ -416,11 +416,11 @@ def qualitative_learning_comment(
         else:
             text = "対象期間では学習面に大きな異常は少ない状況です。"
     elif purpose == "不登校を防ぐためのコメント":
-        text = "学習面の取り組み状況を確認し、負担感がないか見守ります。"
+        text = "学習面の取り組み状況と負担感を確認し、必要に応じて声かけをしてください。"
     elif "正解率" in selected_learning_columns and rate < 0.70:
         text = "対象期間では学習面にやや課題が見られます。理解状況を確認してください。"
     else:
-        text = "対象期間では学習面の取り組みが確認できます。継続して見守ります。"
+        text = "対象期間では学習面の取り組みが見られます。継続して様子を確認してください。"
     return fit_text(text, limit)
 
 def generate_life_comment(
@@ -469,9 +469,9 @@ def generate_life_comment(
         text = f"対象期間は{summary}。数値が目立つ項目を優先して確認してください。"
     elif purpose == "不登校を防ぐためのコメント":
         if absence + late + leave_early + infirmary + rainy >= 4:
-            text = f"対象期間は{summary}。生活面の変化に早めに声かけします。"
+            text = f"対象期間は{summary}。生活面の変化に早めに声かけをしてください。"
         else:
-            text = f"対象期間は{summary}。普段の様子と合わせて見守ります。"
+            text = f"対象期間は{summary}。普段の様子と合わせて確認してください。"
     else:
         if absence + late + leave_early + infirmary + cloudy + rainy >= 4:
             text = f"対象期間は{summary}。生活面に変化が見られます。"
