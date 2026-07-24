@@ -667,6 +667,97 @@ def render_data_page(current_df: pd.DataFrame, period: PeriodSetting, selected_l
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 
+def build_function_requirements_markdown(
+    selected_student: str,
+    view_mode: str,
+    purpose: str,
+    comment_type: str,
+    analysis_mode: str,
+    selected_life_columns: List[str],
+    selected_learning_columns: List[str],
+    period: PeriodSetting,
+    current_df: pd.DataFrame,
+    previous_df: Optional[pd.DataFrame],
+    comments: Dict[str, str],
+) -> str:
+    """現在の画面設定を反映した機能要件書をMarkdown形式で生成する。"""
+
+    generated_at = pd.Timestamp.now(tz="Asia/Tokyo").strftime("%Y/%m/%d %H:%M")
+    current_period = f"{period.current_start:%Y/%m/%d} 〜 {period.current_end:%Y/%m/%d}"
+
+    if period.has_previous:
+        previous_period = f"{period.previous_start:%Y/%m/%d} 〜 {period.previous_end:%Y/%m/%d}"
+    else:
+        previous_period = "なし"
+
+    life_metrics = "\n".join(f"- {metric}" for metric in selected_life_columns) or "- 選択なし"
+    learning_metrics = "\n".join(f"- {metric}" for metric in selected_learning_columns) or "- 選択なし"
+
+    comment_sections = []
+    for title, comment in comments.items():
+        if comment:
+            comment_sections.append(f"### {title}\n\n{comment}")
+
+    generated_comments = "\n\n".join(comment_sections) or "生成対象のコメントはありません。"
+
+    comparison_requirement = (
+        "対象期間と比較期間を集計し、選択指標ごとの差分をコメントに反映する。"
+        if period.has_previous
+        else "対象期間のみを集計し、選択指標の傾向をコメントに反映する。"
+    )
+
+    return f"""# AIコメント機能要件一覧
+
+## 1. ドキュメント情報
+
+- 出力日時：{generated_at}
+- 対象児童ID：{selected_student}
+- アプリ名：AIコメント要件一覧出力アプリ
+- 出力形式：Markdown
+
+## 2. 機能概要
+
+児童の生活面・学習面の記録データを集計し、画面左側で指定した条件に基づいて、
+先生向けのコメントを生成する。
+
+## 3. 現在の画面設定
+
+| 設定項目 | 設定値 |
+|---|---|
+| コメント枠 | {view_mode} |
+| コメントの方針 | {purpose} |
+| コメントの種類 | {comment_type} |
+| 評価するデータ断面 | {analysis_mode} |
+| 対象期間 | {current_period} |
+| 比較期間 | {previous_period} |
+| 対象期間のデータ件数 | {len(current_df)}件 |
+| 比較期間のデータ件数 | {len(previous_df) if previous_df is not None else 0}件 |
+
+## 4. 使用する指標
+
+### 4.1 生活面
+
+{life_metrics}
+
+### 4.2 学習面
+
+{learning_metrics}
+
+## 5. コメント生成要件
+
+1. 画面左側で選択された指標のみを集計対象とする。
+2. 未選択の指標はコメント判定および数値表示に使用しない。
+3. {comparison_requirement}
+4. 「定性的なコメント」では、数値の列挙よりも傾向や確認事項を中心に出力する。
+5. 「定量的なコメント」では、対象期間の集計値または前期間との差を含めて出力する。
+6. 1枠表示では、生活面・学習面のうち選択されている指標だけを使ってコメントを生成する。
+7. 1枠表示で片方の指標が未選択の場合、未選択側の警告文は表示しない。
+8. 2枠表示では、「生活の様子コメント」と「学習の様子コメント」を個別に生成する。
+9. コメント文は、アプリ自身が行動する表現を避け、「確認してください」「声かけをしてください」など利用者向けの表現とする。
+10. コメント文字数は、1枠表示では最大100文字、2枠表示では各最大50文字を基本とする。
+"""
+
+
 # =========================================
 # スタイル
 # =========================================
@@ -774,6 +865,32 @@ comments = generate_comments(
     selected_life_columns,
     selected_learning_columns,
 )
+
+requirements_markdown = build_function_requirements_markdown(
+    selected_student=selected_student,
+    view_mode=view_mode,
+    purpose=purpose,
+    comment_type=comment_type,
+    analysis_mode=analysis_mode,
+    selected_life_columns=selected_life_columns,
+    selected_learning_columns=selected_learning_columns,
+    period=period,
+    current_df=current_df,
+    previous_df=previous_df,
+    comments=comments,
+)
+
+with st.sidebar:
+    st.markdown("---")
+    st.subheader("機能要件")
+    st.download_button(
+        label="機能要件書を出力する",
+        data=requirements_markdown,
+        file_name="ai_comment_function_requirements.md",
+        mime="text/markdown",
+        use_container_width=True,
+    )
+
 
 if st.session_state.show_data_page:
     render_data_page(current_df, period, selected_life_columns, selected_learning_columns)
