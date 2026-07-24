@@ -884,7 +884,7 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("機能要件")
     st.download_button(
-        label="機能要件書を出力する",
+        label="機能要件一覧を出力する",
         data=requirements_markdown,
         file_name="ai_comment_function_requirements.md",
         mime="text/markdown",
